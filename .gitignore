@@ -1,0 +1,67 @@
+# Ignore non-code files by default (including logs, CSV, JSON/JSONOCEL,
+# datasets, images, reports, archives, and model checkpoints).
+*
+
+# Traverse directories so source files can be included at any depth.
+!*/
+
+# Project source code, notebooks, and executable simulation models.
+!*.py
+!*.pyi
+!*.ipynb
+!*.sml
+!*.cpn
+!*.sql
+!*.sh
+!*.ps1
+!*.bat
+!*.cmd
+
+# Essential dependency, build, repository, and licensing files.
+!.gitignore
+!.gitattributes
+!.gitmodules
+!requirements*.txt
+!pyproject.toml
+!REUSE.toml
+!setup.cfg
+!tox.ini
+!pytest.ini
+!Pipfile
+!Pipfile.lock
+!poetry.lock
+!uv.lock
+!environment.yml
+!environment.yaml
+!Makefile
+!Dockerfile
+!version.txt
+!README*
+!LICENSE*
+!LICENSES/**
+!COPYING*
+!NOTICE*
+
+# Exclude these directories even when they contain source files.
+venv*/
+.venv*/
+env/
+ENV/
+env.bak/
+__pycache__/
+__pypackages__/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.cache/
+build/
+dist/
+*.egg-info/
+.eggs/
+node_modules/
+.idea/
+.vscode/
+sap-rpt-1-oss/

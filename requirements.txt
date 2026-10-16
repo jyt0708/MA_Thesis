@@ -1,0 +1,6 @@
+pandas
+numpy
+scikit-learn
+pm4py
+transformers 
+huggingface_hub
