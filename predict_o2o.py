@@ -1,5 +1,7 @@
 """
-SAP RPT 1-OSS experiment: Missing O2O target endpoint
+SAP RPT 1-OSS experiment: Missing O2O target endpoint prediction
+
+OCEL is first being transformed into tabular views, then being masked.
 
 Task
 ----
@@ -8,7 +10,6 @@ predict which target object should be connected to it.
 
 Input files:
     container_logistics_tabular/e2o_level_*.csv
-    container_logistics_tabular/e2o_level.csv
 
 Expected columns:
     source_object_id

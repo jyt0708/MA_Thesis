@@ -26,7 +26,16 @@ import sys
 import yaml
 
 
-def infer_constraints(log: dict) -> tuple[list[dict], dict[str, int]]:
+LOGISTICS_MIN_OUTGOING = {
+    "CR contains HU": 1,
+    "CR for TD": 1,
+    "TD for CO": 1,
+    "TR loads CR": 1,
+}
+
+def infer_constraints(
+    log: dict, domain: str | None = None,
+) -> tuple[list[dict], dict[str, int]]:
     """Compute min/max incoming/outgoing row counts per (source type, q, target type).
 
     Missing endpoints are reported and excluded: DVIDEO's forward matching also
@@ -95,13 +104,16 @@ def infer_constraints(log: dict) -> tuple[list[dict], dict[str, int]]:
     for key in sorted(outgoing):
         source_type, qualifier, target_type = key
         out_counts, in_counts = outgoing[key], incoming[key]
+        min_outgoing = (
+            min(out_counts.values()) if len(out_counts) == population[source_type] else 0
+        )
+        if domain == "logistics" and qualifier in LOGISTICS_MIN_OUTGOING:
+            min_outgoing = LOGISTICS_MIN_OUTGOING[qualifier]
         rules.append({
             "source_type": source_type,
             "qualifier": qualifier,
             "target_type": target_type,
-            "min_outgoing": (
-                min(out_counts.values()) if len(out_counts) == population[source_type] else 0
-            ),
+            "min_outgoing": min_outgoing,
             "max_outgoing": max(out_counts.values()),
             "min_incoming": (
                 min(in_counts.values()) if len(in_counts) == population[target_type] else 0
@@ -115,6 +127,7 @@ def infer_constraints(log: dict) -> tuple[list[dict], dict[str, int]]:
 
 def write_constraints(
     input_path: Path, output_path: Path, *, overwrite: bool = False,
+    domain: str | None = None,
 ) -> dict[str, int] | None:
     """Write a top-level YAML rule list accepted by load_cardinality_constraints.
 
@@ -125,11 +138,11 @@ def write_constraints(
     if output_path.exists() and not overwrite:
         return None
     raw = input_path.read_bytes()
-    rules, stats = infer_constraints(json.loads(raw.decode("utf-8-sig")))
+    rules, stats = infer_constraints(json.loads(raw.decode("utf-8-sig")), domain=domain)
     header = (
         f"# Reference log: {json.dumps(input_path.name)}\n"
-        "# Observed min/max relation-row counts, including zero-degree objects.\n"
-        "# Generate before masking edges; these are not universal domain rules.\n"
+        "# Min/max relation-row counts, including zero-degree objects.\n"
+        f"# Domain: {domain or 'empirical'}; generate before masking edges.\n"
         "# A zero min_outgoing disables missing-edge detection for that rule.\n"
         "# DVIDEO's missing-O2O detector currently does not check min_incoming.\n"
         f"# Excluded missing targets: {stats['skipped_missing_targets']}; "
@@ -165,6 +178,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--input-dir", type=Path, default=Path("."))
     parser.add_argument("--output-dir", type=Path, default=None,
                         help="Default: <input-dir>/container_logistics_constraints")
+    parser.add_argument("--domain", default=None,
+                        help="Apply domain-specific minimums (currently: logistics).")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing constraint files.")
     args = parser.parse_args(argv)
     output_dir = args.output_dir if args.output_dir is not None else args.input_dir / "container_logistics_constraints"
@@ -180,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     for path in logs:
         output_path = output_dir / f"cardinality_constraints_{path.stem}.yaml"
         try:
-            stats = write_constraints(path, output_path, overwrite=args.overwrite)
+            stats = write_constraints(
+                path, output_path, overwrite=args.overwrite, domain=args.domain,
+            )
         except (OSError, ValueError) as error:
             print(f"ERROR {path.name}: {error}", file=sys.stderr)
             failures += 1

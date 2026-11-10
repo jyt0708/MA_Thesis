@@ -1,12 +1,13 @@
 ﻿r"""Evaluate DVIDEO missing-O2O alerts and candidate edges against masked logs.
 
 Run from the repository root:
-    .\venv\Scripts\python.exe -X utf8 evaluate_dvideo_o2o.py
-    .\venv\Scripts\python.exe -X utf8 evaluate_dvideo_o2o.py --logs 1 2 --overwrite
+    .\venv\Scripts\python.exe -X utf8 evaluate_dvideo_o2o.py --domain logistics
+    .\venv\Scripts\python.exe -X utf8 evaluate_dvideo_o2o.py --domain logistics --logs 1 2 --overwrite
 
 Ground truth is original minus masked relationship rows. Candidate metrics use
 unique directed (source, qualifier, target) triples, not confirmed repairs.
-Writes summary.csv (TP/FP/FN) and errors.csv (FP/FN identities and reasons).
+Writes summary.csv and summary.json (row counts, TP/FP/FN, precision/recall,
+and candidate FN reason counts), plus errors.csv (FP/FN identities and reasons).
 No LLM or external API is used.
 """
 
@@ -22,6 +23,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 MEASUREMENTS = ("source_alerts", "candidate_edges")
+COUNT_FIELDS = ("original_rows", "masked_rows", "remaining_rows", "removed_unique_edges",
+                "detected_missing_relations", "detected_candidate_edges", "detected_source_alerts")
+CANDIDATE_FN_REASONS = (
+    "target_object_missing", "blank_qualifier", "no_matching_constraint",
+    "outgoing_minimum_disabled", "remaining_count_satisfies_minimum",
+    "no_alert_after_candidate_filters", "target_not_in_returned_candidates",
+)
 ERROR_FIELDS = ["log", "category", "source_id", "source_type", "qualifier",
                 "target_id", "target_type", "removed_target_ids", "min_outgoing",
                 "actual_outgoing", "reason", "explanation"]
@@ -80,10 +88,15 @@ def ground_truth(original: dict, masked: dict) -> tuple[dict, Counter, Counter, 
 
 
 def metrics(truth: set, predicted: set) -> dict:
+    return metrics_from_counts(len(truth & predicted), len(predicted - truth), len(truth - predicted))
+
+
+def metrics_from_counts(tp: int, fp: int, fn: int) -> dict:
+    """Use zero for precision/recall when their denominator is zero."""
     return {
-        "tp": len(truth & predicted),
-        "fp": len(predicted - truth),
-        "fn": len(truth - predicted),
+        "tp": tp, "fp": fp, "fn": fn,
+        "precision": tp / (tp + fp) if tp + fp else 0.0,
+        "recall": tp / (tp + fn) if tp + fn else 0.0,
     }
 
 
@@ -158,9 +171,20 @@ def score_detections(objects: dict, original: Counter, masked: Counter,
         add_error("candidate_edges_fp", group(edge), edge[2], reason)
     for edge in sorted(truth - candidates, key=sort_key):
         add_error("candidate_edges_fn", group(edge), edge[2], missed_reason(group(edge)))
+    candidate_metrics = metrics(truth, candidates)
+    reason_counts = Counter(error["reason"] for error in errors if error["category"] == "candidate_edges_fn")
     return {
-        "candidate_edges": metrics(truth, candidates),
+        # Row counts retain duplicates; detections and metrics count unique edges/groups.
+        "original_rows": sum(original.values()),
+        "masked_rows": sum(removed.values()),
+        "remaining_rows": sum(masked.values()),
+        "removed_unique_edges": len(truth),
+        "detected_missing_relations": candidate_metrics["tp"],
+        "detected_candidate_edges": len(candidates),
+        "detected_source_alerts": len(alerts),
+        "candidate_edges": candidate_metrics,
         "source_alerts": metrics(truth_groups, alerts),
+        "candidate_false_negative_reasons": {reason: reason_counts[reason] for reason in CANDIDATE_FN_REASONS},
         "errors": errors,
     }
 
@@ -192,8 +216,17 @@ def evaluate_pair(original_path: Path, masked_path: Path, constraints_path: Path
 
 
 def aggregate(results: list[dict]) -> dict:
-    return {level: {metric: sum(row[level][metric] for row in results)
-                    for metric in ("tp", "fp", "fn")} for level in MEASUREMENTS}
+    """Sum counts across logs and compute micro-averaged precision/recall."""
+    total = {field: sum(row[field] for row in results) for field in COUNT_FIELDS}
+    for level in MEASUREMENTS:
+        total[level] = metrics_from_counts(**{
+            metric: sum(row[level][metric] for row in results) for metric in ("tp", "fp", "fn")
+        })
+    total["candidate_false_negative_reasons"] = {
+        reason: sum(row["candidate_false_negative_reasons"][reason] for row in results)
+        for reason in CANDIDATE_FN_REASONS
+    }
+    return total
 
 
 def write_csv(path: Path, fields: list[str], rows, overwrite: bool):
@@ -205,15 +238,25 @@ def write_csv(path: Path, fields: list[str], rows, overwrite: bool):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--domain", type=str, default=None, help="Domain suffix to append to default input and output directories.")
     parser.add_argument("--original-dir", type=Path, default=ROOT)
-    parser.add_argument("--masked-dir", type=Path, default=ROOT / "masked_o2o_relations")
+    parser.add_argument("--masked-dir", type=Path, default=None)
     parser.add_argument("--constraints-dir", type=Path, default=ROOT / "container_logistics_constraints")
     parser.add_argument("--dvideo-dir", type=Path, default=ROOT / "coopis-dvideo" / "detection")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "results_dvideo_o2o")
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--logs", type=int, nargs="+", help="Only evaluate these log numbers; default: all originals.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--progress", action="store_true", help="Show DVIDEO's progress bars.")
     args = parser.parse_args(argv)
+
+    domain_suffix = f"_{args.domain}" if args.domain else ""
+
+    if args.masked_dir is None:
+        args.masked_dir = ROOT / f"masked_o2o_relations{domain_suffix}"
+
+    if args.output_dir is None:
+        args.output_dir = ROOT / f"results_dvideo_o2o{domain_suffix}"
+
     try:
         from container_logistics_constraints.generate_o2o_constraints import discover_logs
         originals = discover_logs(args.original_dir)
@@ -232,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not path.is_file():
                     raise ValueError(f"Required input not found: {path}")
             pairs.append((original, masked, constraints))
-        outputs = [args.output_dir / name for name in ("summary.csv", "errors.csv")]
+        outputs = [args.output_dir / name for name in ("summary.csv", "errors.csv", "summary.json")]
         if not args.overwrite and any(p.exists() for p in outputs):
             raise ValueError("Report files already exist; use --overwrite or a different --output-dir.")
         dvideo = load_dvideo(args.dvideo_dir, args.progress)
@@ -247,31 +290,43 @@ def main(argv: list[str] | None = None) -> int:
             result = evaluate_pair(original, masked, constraints, dvideo)
             results.append(result)
             c, a = result["candidate_edges"], result["source_alerts"]
+            print(f"  O2O rows: original={result['original_rows']} masked (removed)={result['masked_rows']} "
+                  f"remaining={result['remaining_rows']}; correctly detected missing edges="
+                  f"{result['detected_missing_relations']}", flush=True)
             print(f"  Candidate edges: TP={c['tp']} FP={c['fp']} FN={c['fn']}; "
-                  f"source alerts: TP={a['tp']} FP={a['fp']} FN={a['fn']}", flush=True)
+                  f"precision={c['precision']:.4f} recall={c['recall']:.4f}; "
+                  f"source alerts: TP={a['tp']} FP={a['fp']} FN={a['fn']}; "
+                  f"precision={a['precision']:.4f} recall={a['recall']:.4f}", flush=True)
         except (OSError, ValueError, KeyError, TypeError) as error:
             print(f"ERROR {original.name}: {error}", file=sys.stderr, flush=True)
             return 1
 
     total = aggregate(results)
+    summaries = [{key: value for key, value in result.items() if key != "errors"} for result in results]
     csv_rows = []
-    for result in [*results, {"log": "TOTAL", **total}]:
-        row = {"log": result["log"]}
+    for result in [*summaries, {"log": "TOTAL", **total}]:
+        row = {"log": result["log"], **{field: result[field] for field in COUNT_FIELDS}}
         for level in MEASUREMENTS:
             row.update({f"{level}_{k}": v for k, v in result[level].items()})
+        row.update({f"candidate_false_negative_reasons_{reason}": count
+                    for reason, count in result["candidate_false_negative_reasons"].items()})
         csv_rows.append(row)
     try:
         write_csv(outputs[0], list(csv_rows[0]), csv_rows, args.overwrite)
         write_csv(outputs[1], ERROR_FIELDS,
                   ({"log": result["log"], **error} for result in results for error in result["errors"]),
                   args.overwrite)
+        with outputs[2].open("w" if args.overwrite else "x", encoding="utf-8") as stream:
+            json.dump({"logs": summaries, "total": total}, stream, indent=2, ensure_ascii=True)
+            stream.write("\n")
     except OSError as error:
-        print(f"ERROR writing reports: {error}. Close open CSV files or use another --output-dir.", file=sys.stderr)
+        print(f"ERROR writing reports: {error}. Close open report files or use another --output-dir.", file=sys.stderr)
         return 1
     print(f"\nEvaluated {len(results)}/{len(pairs)} logs")
     for level in ("candidate_edges", "source_alerts"):
         m = total[level]
-        print(f"TOTAL {level}: TP={m['tp']} FP={m['fp']} FN={m['fn']}")
+        print(f"TOTAL {level}: TP={m['tp']} FP={m['fp']} FN={m['fn']}; "
+              f"precision={m['precision']:.4f} recall={m['recall']:.4f}")
     print(f"Reports: {args.output_dir.resolve()}")
     return 0
 
