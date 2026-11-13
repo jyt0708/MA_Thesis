@@ -12,7 +12,9 @@ import pandas as pd
 import predict_obj_attr_value as base
 
 
-OUTPUT_DIR = Path("Manufacturing/results_object_attr_values")
+ROOT = Path(__file__).resolve().parents[2]
+MANUFACTURING_DIR = ROOT / "Manufacturing"
+OUTPUT_DIR = MANUFACTURING_DIR / "results_object_attr_values"
 
 # Keep this reference before main() replaces base.make_model.
 ORIGINAL_MAKE_MODEL = base.make_model

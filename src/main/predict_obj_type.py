@@ -39,12 +39,14 @@ FILES = [
     # Add individual CSV files here when needed.
 ]
 
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
+
 # Match object_level.csv, object_level_2.csv, and other object_level*.csv files.
 INPUT_GLOB = "Manufacturing/manufact_tabular/object_level*.csv"
 
-
-
-OUTPUT_DIR = Path("Manufacturing/results_object_type")
+OUTPUT_DIR = MANUFACTURING_DIR / "results_object_type"
 
 MISSING_RATE = 0.10
 SEEDS = [42, 43, 44]

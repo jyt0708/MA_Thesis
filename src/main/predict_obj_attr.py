@@ -39,15 +39,20 @@ from sklearn.metrics import (
 
 
 DEFAULT_SEEDS = (42, 43, 44)
-INPUT_DIR = Path("container_logistics_tabular")
+
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
+
+INPUT_DIR = LOGISTICS_DIR / "container_logistics_tabular"
 # INPUT_DIR = Path("Manufacturing/manufact_tabular")
 INPUT_PATTERNS = ("object_level.csv", "object_level_*.csv")
 # OUTPUT_DIR = Path("Manufacturing/results_object_attribute")
-OUTPUT_DIR = Path("results_object_attribute")
+OUTPUT_DIR = LOGISTICS_DIR / "results_object_attribute"
 MISSING_RATE = 0.10
 SEEDS = DEFAULT_SEEDS
-MAX_CONTEXT_SIZE = 8192 # 2048 # 8192
-BAGGING = 8
+MAX_CONTEXT_SIZE = 2048 
+BAGGING = 1
 KEEP_OBJECT_ID = False
 KEEP_TARGET_VALUE = False
 

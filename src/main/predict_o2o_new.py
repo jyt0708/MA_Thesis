@@ -1,15 +1,14 @@
 """Predict missing O2O endpoints with SAP RPT, restricted to DVIDEO candidates.
 
-Only ContainerLogistics 1, 2 and 3 are being predicted. 
 Use the already-masked OCELs and CSV tables; do not mask again. 
 Original OCELs are read ONLY for evaluation after queries/predictions have been constructed. 
 DVIDEO and its first-ten candidate limit are unchanged. 
 Every predicted endpoint must belong to its candidate set.
 
 Examples (from the Logistics directory):
-    python predict_o2o_new.py --prepare-only
-    python predict_o2o_new.py
-    python predict_o2o_new.py --log-ids 2 --max-context-size 8192 --bagging 8
+    python predict_o2o_new.py --domain logistics --prepare-only
+    python predict_o2o_new.py --domain logistics
+    python predict_o2o_new.py --domain logistics --log-ids 2 --max-context-size 8192 --bagging 8
 
 No model is loaded in prepare-only mode. Results then go into a preparation/subdirectory, 
 so they cannot be mistaken for model predictions. 
@@ -32,14 +31,34 @@ import sys
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent
+
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
 sys.path.insert(0, str(ROOT / "coopis-dvideo" / "detection"))
 
 from detection.missing_o2o_relation import detect_missing_o2o_relation
 from detection.missing_object import load_cardinality_constraints
 from importer.ocel_importer import import_ocel_raw
 
-LOGS = {1: "ContainerLogistics_1.json", 2: "ContainerLogistics_2.jsonocel", 3: "ContainerLogistics_3.jsonocel"}
+LOGS = {
+    1: "ContainerLogistics_1.json", 
+    2: "ContainerLogistics_2.jsonocel", 
+    3: "ContainerLogistics_3.jsonocel",
+    4: "ContainerLogistics_4.jsonocel",
+    5: "ContainerLogistics_5.jsonocel",
+    6: "ContainerLogistics_6.jsonocel",
+    7: "ContainerLogistics_7.jsonocel",
+    8: "ContainerLogistics_8.jsonocel",
+    9: "ContainerLogistics_9.jsonocel",
+    10: "ContainerLogistics_10.jsonocel",
+    11: "ContainerLogistics_11.jsonocel",
+    12: "ContainerLogistics_12.jsonocel",
+    13: "ContainerLogistics_13.jsonocel",
+    14: "ContainerLogistics_14.jsonocel",
+    15: "ContainerLogistics_15.jsonocel",
+    16: "ContainerLogistics_16.jsonocel"
+    }
 TARGET = "target_object_id"
 
 
@@ -59,11 +78,15 @@ def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
 
 @dataclass
 class Prepared:
+    # Masked OCEL as dict
     raw: dict
-    raw_to_table: dict[str, str]
-    table_to_raw: dict[str, str]
+    # Mappings between OCEL object IDs and CSV object IDs
+    raw_to_table: dict[str, str]  
+    table_to_raw: dict[str, str] 
+    
     context: pd.DataFrame
     queries: pd.DataFrame
+    # Candidate targets, statuses, predicted targets and rankings
     records: list[dict]
 
 
@@ -144,6 +167,7 @@ def prepare(masked_path: Path, o2o_csv: Path, object_csv: Path, constraints_path
         raw_candidates = sorted(set(detected["candidates"]))
         existing = set(detected["actual_targets"])
         
+        # Candidate filtering
         candidates = sorted({mapping[c] for c in raw_candidates
                              if c in mapping and c not in existing})
         
@@ -162,18 +186,25 @@ def prepare(masked_path: Path, o2o_csv: Path, object_csv: Path, constraints_path
             status = "no_supported_candidates"
             
         records.append({
-            "source_id_raw": source_raw, "source_object_id": source,
-            "source_object_type": types[source], "qualifier": detected["qualifier"],
+            "source_id_raw": source_raw, 
+            "source_object_id": source,
+            "source_object_type": types[source], 
+            "qualifier": detected["qualifier"],
             "expected_target_type": detected["expected_target_type"],
             "min_expected": int(detected["min_expected"]),
             "actual_count": int(detected["actual_count"]),
             "required_additions": int(detected["min_expected"] - detected["actual_count"]),
-            "dvideo_candidates_raw": raw_candidates,
-            "candidate_target_ids": candidates, "supported_candidate_ids": supported,
-            "actual_targets_raw": sorted(existing), "status": status,
-            "predicted_target_ids": [], "predicted_target_ids_raw": [],
-            "ranked_target_ids": [], "ranked_target_ids_raw": [],
-            "ranked_probabilities": [], "allowed_probability_mass": None,
+            "dvideo_candidates_raw": raw_candidates,    # Target objects suggested by DVIDEO, before model prediction
+            "candidate_target_ids": candidates, 
+            "supported_candidate_ids": supported,
+            "actual_targets_raw": sorted(existing), 
+            "status": status,
+            "predicted_target_ids": [], 
+            "predicted_target_ids_raw": [],   # Targets finally selected using SAP RPT’s prob., restricted to allowed candidates
+            "ranked_target_ids": [], 
+            "ranked_target_ids_raw": [],
+            "ranked_probabilities": [], 
+            "allowed_probability_mass": None,
         })
         
         # One query is created per detection
@@ -310,64 +341,101 @@ def evaluate(prepared: Prepared, original_path: Path, inference_done: bool) -> t
     metrics are reported only for groups with exactly one removed edge and one
     required addition; other groups have no unambiguous row-to-row assignment.
     """
+    
+    # Original unmasked OCEL, used as ground truth
     original = json.loads(original_path.read_text(encoding="utf-8-sig"))
     if {k: v for k, v in original.items() if k != "objects"} != {
             k: v for k, v in prepared.raw.items() if k != "objects"}:
         raise ValueError("Original and masked logs differ outside object relationships.")
+    
     original_objects = {o["id"]: {k: v for k, v in o.items() if k != "relationships"}
                         for o in original["objects"]}
     masked_objects = {o["id"]: {k: v for k, v in o.items() if k != "relationships"}
                       for o in prepared.raw["objects"]}
     if original_objects != masked_objects:
         raise ValueError("Original and masked object metadata differ.")
+    
     before, after = edge_counts(original), edge_counts(prepared.raw)
     if after - before:
         raise ValueError("Masked log contains edges absent from original.")
+    
+    # Removed (source_obj_id, qualifier, target_obj_id) groups
     removed = before - after
     types = {o["id"]: o["type"] for o in original["objects"]}
     records = {(r["source_id_raw"], r["qualifier"], r["expected_target_type"]): r
                for r in prepared.records}
+    
+    # Unique (source_obj_id, qualifier, target_obj_type) groups
     group_counts = Counter()
     for (source, qualifier, target), count in removed.items():
         group_counts[(source, qualifier, types.get(target))] += count
+    
     proposed = Counter((r["source_id_raw"], r["qualifier"], target)
                        for r in prepared.records for target in r["predicted_target_ids_raw"])
+    
+    # Correctly recovered (source_obj_id, qualifier, target_obj_id) relationships
     matched = proposed & removed
+    
     details, single_true, single_pred = [], [], []
     for (source, qualifier, target), count in sorted(removed.items()):
+        # Looks for DVIDEO's detection with the same (source_obj_id, qualifier, target_obj_type)
         key = (source, qualifier, types.get(target))
         record = records.get(key)
+        
+        # Order candidate ids by model probability
         ranked = record["ranked_target_ids_raw"] if record else []
         mapped = prepared.raw_to_table.get(target)
-        row = {"source_id_raw": source, "qualifier": qualifier, "true_target_id_raw": target,
-               "removed_count": count, "detected": record is not None,
+        row = {
+               "source_id_raw": source, 
+               "qualifier": qualifier, 
+               "true_target_id_raw": target,
+               "removed_count": count, 
+               "detected": record is not None,
+               
+               # Detection exsists AND targets are selected using SAP RPT's probabilities
                "in_dvideo_candidates": bool(record and target in record["dvideo_candidates_raw"]),
+               
+               # Detection exsists AND true target survives candidate filtering and appears in context
                "in_supported_candidates": bool(record and mapped in record["supported_candidate_ids"]),
                "status": record["status"] if record else "not_detected",
                "recovered_count": matched[(source, qualifier, target)],
-               "hit_at_3": target in ranked[:3], "hit_at_5": target in ranked[:5]}
+               "hit_at_3": target in ranked[:3], 
+               "hit_at_5": target in ranked[:5]
+        }
         details.append(row)
         if (record and group_counts[key] == 1 and record["required_additions"] == 1
                 and len(record["predicted_target_ids_raw"]) == 1):
             single_true.append(target)
             single_pred.append(record["predicted_target_ids_raw"][0])
+    
     total = sum(removed.values())
     ratio = lambda n, d: n / d if d else None
     summary = {
-        "original_o2o_rows": sum(before.values()), "masked_o2o_rows": sum(after.values()),
+        "original_o2o_rows": sum(before.values()), 
+        "masked_o2o_rows": sum(after.values()),
         "removed_o2o_rows": total,
         "removed_edges_detected": sum(r["removed_count"] for r in details if r["detected"]),
+        
+        # Fraction whose target appears in DVIDEO's candidate set
+        # removed relations covered by DVIDEO's candidates / all removed relations
         "dvideo_candidate_recall": ratio(sum(r["removed_count"] for r in details if r["in_dvideo_candidates"]), total),
+        
+        # Fraction whose 
+        # removed relations covered by supported candidates / all removed relationships
         "supported_candidate_recall": ratio(sum(r["removed_count"] for r in details if r["in_supported_candidates"]), total),
     }
     if inference_done:
         recovered = sum(matched.values())
-        summary.update({"predicted_edges": sum(proposed.values()), "recovered_edges": recovered,
+        summary.update({"predicted_edges": sum(proposed.values()), 
+                        "recovered_edges": recovered,
                         "repair_precision": ratio(recovered, sum(proposed.values())),
+                        
+                        # Correctly recovered relationships / all removed relationships
                         "repair_recall_all_removed": ratio(recovered, total),
                         "hits_at_3_all_removed": ratio(sum(r["removed_count"] for r in details if r["hit_at_3"]), total),
                         "hits_at_5_all_removed": ratio(sum(r["removed_count"] for r in details if r["hit_at_5"]), total),
                         "single_endpoint_evaluated": len(single_true)})
+        
         if single_true:
             from sklearn.metrics import accuracy_score, precision_recall_fscore_support
             summary["single_endpoint_accuracy"] = float(accuracy_score(single_true, single_pred))
@@ -388,12 +456,13 @@ def write_records(path: Path, records: list[dict], empty_columns: list[str]) -> 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--domain", type=str, default=None, help="Domain suffix to append to masked and output directories.")
     parser.add_argument("--log-ids", nargs="+", type=int, choices=LOGS, default=[1, 2])
-    parser.add_argument("--masked-dir", type=Path, default=ROOT / "masked_o2o_relations")
-    parser.add_argument("--tabular-dir", type=Path, default=ROOT / "container_logistics_tabular_o2o_masked")
-    parser.add_argument("--constraints-dir", type=Path, default=ROOT / "container_logistics_constraints")
-    parser.add_argument("--original-dir", type=Path, default=ROOT)
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "results_o2o_new")
+    parser.add_argument("--masked-dir", type=Path, default=LOGISTICS_DIR / "masked_o2o_relations")
+    parser.add_argument("--tabular-dir", type=Path, default=LOGISTICS_DIR / "container_logistics_tabular_o2o_masked")
+    parser.add_argument("--constraints-dir", type=Path, default=LOGISTICS_DIR / "container_logistics_constraints")
+    parser.add_argument("--original-dir", type=Path, default=LOGISTICS_DIR)
+    parser.add_argument("--output-dir", type=Path, default=LOGISTICS_DIR / "results_o2o_new")
     parser.add_argument("--max-context-size", type=int, default=2048)
     parser.add_argument("--bagging", type=int, default=1)
     parser.add_argument("--query-batch-size", type=int, default=64)
@@ -401,9 +470,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prepare-only", action="store_true", help="Run real DVIDEO and prepare features without loading RPT.")
     parser.add_argument("--no-evaluate", action="store_true", help="Do not read original logs or compute ground-truth metrics.")
     args = parser.parse_args(argv)
+    if args.domain:
+        args.masked_dir = args.masked_dir.with_name(f"{args.masked_dir.name}_{args.domain}")
+        args.output_dir = args.output_dir.with_name(f"{args.output_dir.name}_{args.domain}")
     
     if min(args.max_context_size, args.bagging, args.query_batch_size) < 1:
         parser.error("Context size, bagging, and query batch size must be positive.")
+    
     output = args.output_dir / "preparation" if args.prepare_only else args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     summaries, failures = [], 0

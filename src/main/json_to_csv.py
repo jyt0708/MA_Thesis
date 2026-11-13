@@ -10,16 +10,6 @@ object_level_<suffix>.csv
     Rows with a present but null, empty, or whitespace-only attribute are omitted.
     Rows with a present timing attribute that is not a string beginning with
     an ASCII digit (0-9) are also omitted. This is not full timestamp validation.
-    E2O and O2O rows reference only objects retained in this view.
-    Sensor points are retained in order as a JSON array in
-    ``obj_attr__stream:point`` (including single-point bundles).
-    For Manufacturing, nested timestamps outside arrays also get individual
-    ``obj_attr__<parent>__<field>`` columns and matching ``__exists`` flags.
-timestamp_sample_level_<suffix>.csv (Manufacturing only)
-    One row per array item containing valid timestamps, linked by object_id.
-    Timestamp targets use ``obj_attr__<path>``; other scalar sample fields use
-    ``sample_attr__<path>``. Array positions are metadata, not target columns.
-    Nested arrays get separate rows identified by array_item_path.
 e2o_level_<suffix>.csv
     One row per event-to-object relation, including event attributes and
     the object's position in its event lifecycle.
@@ -32,15 +22,12 @@ The converter accepts both the legacy OCEL JSON structure used by the supplied
 log (``ocel:events`` / ``ocel:objects`` dictionaries) and the OCEL 2.0 JSON
 structure (``events`` / ``objects`` lists).
 Existing output files are skipped; only missing CSV files are created.
-Manufacturing extraction is enabled for inputs beneath a Manufacturing folder,
-or explicitly with ``manufacturing=True``. Timestamp text, timezone offsets,
-and fractional seconds are preserved. Full date-and-time strings are detected
+Timestamp text, timezone offsets, and fractional seconds are preserved. Full date-and-time strings are detected
 by shape and calendar validity, not by field name. Date-only strings, numeric
 epochs, nulls, and invalid timestamps are not extracted.
 
 Original object JSON values remain available. Exclude these source columns
 and equivalent timestamps when training on an extracted target to avoid leakage.
-
 """
 
 from __future__ import annotations
@@ -208,78 +195,37 @@ def _nested_path(parts: tuple) -> str:
     )
 
 
-def extract_manufacturing_timestamps(objects: list[dict]) -> list[dict]:
-    """Add scalar timestamp targets to objects and return array sample rows.
+def extract_manufacturing_timestamps(objects: list[dict]) -> None:
+    """Add scalar timestamp targets outside arrays to objects in place.
 
     Normalization has already serialized nested attributes as JSON strings.
     Decode them for traversal without modifying their stored source values.
-    Each array item is a separate sample; all of its timestamps share that
-    row, including timestamps nested inside its metadata dictionaries.
+    Arrays are skipped entirely; no timestamp sample rows are computed.
     """
-    samples = []
     for obj in objects:
         extracted = {}
 
-        def visit(value, path, location, sample=None):
+        def visit(value, path):
             if isinstance(value, dict):
                 for key, child in value.items():
-                    visit(child, path + (key,), location + (key,), sample)
-            elif isinstance(value, list):
-                for index, item in enumerate(value):
-                    row = {
-                        "object_id": obj["id"],
-                        "object_type": obj["type"],
-                        "array_path": _nested_path(path),
-                        "array_item_path": _nested_path(location + (index,)),
-                        "sample_index": index,
-                    }
-                    visit(item, path, location + (index,), row)
-                    if any(key.startswith("obj_attr__") for key in row):
-                        samples.append(row)
-            else:
+                    visit(child, path + (key,))
+            elif isinstance(value, str) and _is_timestamp_text(value):
                 name = _nested_path(path)
-                if isinstance(value, str) and _is_timestamp_text(value):
-                    if sample is None:
-                        if name in obj["attributes"]:
-                            raise ValueError(
-                                f"Extracted timestamp conflicts with attribute: {name}"
-                            )
-                        extracted[name] = value
-                    else:
-                        sample[f"obj_attr__{name}"] = value
-                        sample[f"obj_attr__{name}__exists"] = 1
-                elif sample is not None:
-                    sample[f"sample_attr__{name}"] = csv_value(value)
+                if name in obj["attributes"]:
+                    raise ValueError(
+                        f"Extracted timestamp conflicts with attribute: {name}"
+                    )
+                extracted[name] = value
 
         for name, value in obj["attributes"].items():
-            if isinstance(value, str) and value.lstrip().startswith(("{", "[")):
+            if isinstance(value, str) and value.lstrip().startswith("{"):
                 try:
                     value = json.loads(value)
                 except json.JSONDecodeError:
                     continue
-            if isinstance(value, (dict, list)):
-                visit(value, (name,), (name,))
+            if isinstance(value, dict):
+                visit(value, (name,))
         obj["attributes"].update(extracted)
-    return samples
-
-
-def timestamp_sample_view(
-    samples: list[dict], retained_object_ids: set[str]
-) -> pd.DataFrame:
-    """Keep samples of retained objects and complete their existence flags."""
-    columns = [
-        "object_id", "object_type", "array_path", "array_item_path", "sample_index",
-    ]
-    frame = pd.DataFrame(samples)
-    if frame.empty:
-        return pd.DataFrame(columns=columns)
-    frame = frame.loc[frame["object_id"].isin(retained_object_ids)].copy()
-    for column in frame.columns:
-        if column.startswith("obj_attr__") and column.endswith("__exists"):
-            frame[column] = frame[column].fillna(0).astype("int8")
-    frame = frame.reindex(columns=columns + sorted(set(frame.columns) - set(columns)))
-    # Traversal order preserves source array order, including nested arrays.
-    return frame.reset_index(drop=True)
 
 
 def normalize_ocel(
@@ -525,7 +471,7 @@ def convert_ocel_to_tabular_views(
     """Create missing event-, object-, E2O-, and O2O-level CSV files.
 
     Return all views computed from the input, even when existing CSVs are skipped.
-    Manufacturing inputs also extract nested timestamps and export array samples.
+    Manufacturing inputs also extract nested timestamps outside arrays.
     Override automatic input-folder detection with the manufacturing keyword.
     """
     json_path = Path(json_path)
@@ -547,7 +493,8 @@ def convert_ocel_to_tabular_views(
     del raw_ocel
     rename_object_ids_by_type(events, objects)
     rename_event_ids_by_type(events, objects)
-    timestamp_samples = extract_manufacturing_timestamps(objects) if manufacturing else []
+    if manufacturing:
+        extract_manufacturing_timestamps(objects)
 
     object_by_id = {obj["id"]: obj for obj in objects}
     object_type_by_id = {obj["id"]: obj["type"] for obj in objects}
@@ -827,13 +774,6 @@ def convert_ocel_to_tabular_views(
         "o2o": output_dir / f"o2o_level_{output_suffix}.csv",
     }
     views = {"event": event_df, "object": object_df, "e2o": e2o_df, "o2o": o2o_df}
-    if manufacturing:
-        views["timestamp_sample"] = timestamp_sample_view(
-            timestamp_samples, retained_object_ids
-        )
-        output_paths["timestamp_sample"] = (
-            output_dir / f"timestamp_sample_level_{output_suffix}.csv"
-        )
     for name, output_path in output_paths.items():
         if output_path.exists():
             print(f"Skipping existing output: {output_path}")
@@ -848,20 +788,21 @@ def convert_ocel_to_tabular_views(
     print(f"Object-level:    {object_df.shape[0]:,} rows x {object_df.shape[1]:,} columns")
     print(f"E2O-level:       {e2o_df.shape[0]:,} rows x {e2o_df.shape[1]:,} columns")
     print(f"O2O-level:       {o2o_df.shape[0]:,} rows x {o2o_df.shape[1]:,} columns")
-    if manufacturing:
-        sample_df = views["timestamp_sample"]
-        print(f"Timestamp samples: {sample_df.shape[0]:,} rows x {sample_df.shape[1]:,} columns")
     print(f"Output directory: {output_dir.resolve()}")
 
     return views
 
 
 if __name__ == "__main__":
-    input_prefix = "log" # "ContainerLogistics" # "log"
-    output_dir = "Manufacturing/manufact_tabular" # "container_logistics_tabular" # "Manufacturing/manufact_tabular"
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    LOGISTICS_DIR = PROJECT_ROOT / "Logistics"
+    MANUFACTURING_DIR = PROJECT_ROOT / "Manufacturing"
+    
+    input_prefix = LOGISTICS_DIR / "ContainerLogistics" # "Logistics/ContainerLogistics" 
+    output_dir = "container_logistics_tabular_o2o_masked" # "container_logistics_tabular_o2o_masked" # "container_logistics_tabular" # "Manufacturing/manufact_tabular"
 
-    for suffix in range(2, 18):
-        json_path = Path(f"Manufacturing/{input_prefix}_{suffix}.jsonocel")
+    for suffix in range(2, 17):
+        json_path = Path(f"masked_o2o_relations_logistics/{input_prefix}_{suffix}_masked.jsonocel")   # masked_o2o_relations_logistics/{input_prefix}_{suffix}_masked.jsonocel
 
         if not json_path.exists():
             print(f"Skipping missing file: {json_path}")

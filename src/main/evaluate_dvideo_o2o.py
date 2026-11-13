@@ -21,7 +21,12 @@ import json
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parent
+
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
+DVIDEO_DIR = ROOT / "coopis-dvideo" / "detection"
+
 MEASUREMENTS = ("source_alerts", "candidate_edges")
 COUNT_FIELDS = ("original_rows", "masked_rows", "remaining_rows", "removed_unique_edges",
                 "detected_missing_relations", "detected_candidate_edges", "detected_source_alerts")
@@ -239,10 +244,10 @@ def write_csv(path: Path, fields: list[str], rows, overwrite: bool):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--domain", type=str, default=None, help="Domain suffix to append to default input and output directories.")
-    parser.add_argument("--original-dir", type=Path, default=ROOT)
+    parser.add_argument("--original-dir", type=Path, default=LOGISTICS_DIR)
     parser.add_argument("--masked-dir", type=Path, default=None)
-    parser.add_argument("--constraints-dir", type=Path, default=ROOT / "container_logistics_constraints")
-    parser.add_argument("--dvideo-dir", type=Path, default=ROOT / "coopis-dvideo" / "detection")
+    parser.add_argument("--constraints-dir", type=Path, default=LOGISTICS_DIR / "container_logistics_constraints")
+    parser.add_argument("--dvideo-dir", type=Path, default=DVIDEO_DIR)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--logs", type=int, nargs="+", help="Only evaluate these log numbers; default: all originals.")
     parser.add_argument("--overwrite", action="store_true")
@@ -252,21 +257,30 @@ def main(argv: list[str] | None = None) -> int:
     domain_suffix = f"_{args.domain}" if args.domain else ""
 
     if args.masked_dir is None:
-        args.masked_dir = ROOT / f"masked_o2o_relations{domain_suffix}"
+        if args.domain == "manufacturing":
+            args.masked_dir = MANUFACTURING_DIR / f"masked_o2o_relations{domain_suffix}"
+        else:
+            args.masked_dir = LOGISTICS_DIR / f"masked_o2o_relations{domain_suffix}"
 
     if args.output_dir is None:
-        args.output_dir = ROOT / f"results_dvideo_o2o{domain_suffix}"
+        if args.domain == "manufacturing":
+            args.output_dir = MANUFACTURING_DIR / f"results_dvideo_o2o{domain_suffix}"
+        else:
+            args.output_dir = LOGISTICS_DIR / f"results_dvideo_o2o{domain_suffix}"
 
     try:
         from container_logistics_constraints.generate_o2o_constraints import discover_logs
         originals = discover_logs(args.original_dir)
+        
         if args.logs:
             available = {int(p.stem.rsplit("_", 1)[1]) for p in originals}
             if set(args.logs) - available:
                 raise ValueError(f"Original log numbers not found: {sorted(set(args.logs) - available)}")
             originals = [p for p in originals if int(p.stem.rsplit("_", 1)[1]) in args.logs]
+        
         if not originals:
             raise ValueError("No ContainerLogistics originals found.")
+        
         pairs = []
         for original in originals:
             masked = args.masked_dir / f"{original.stem}_masked{original.suffix}"
@@ -276,8 +290,10 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError(f"Required input not found: {path}")
             pairs.append((original, masked, constraints))
         outputs = [args.output_dir / name for name in ("summary.csv", "errors.csv", "summary.json")]
+        
         if not args.overwrite and any(p.exists() for p in outputs):
             raise ValueError("Report files already exist; use --overwrite or a different --output-dir.")
+        
         dvideo = load_dvideo(args.dvideo_dir, args.progress)
         args.output_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError, ImportError) as error:

@@ -38,12 +38,14 @@ from sap_rpt_oss import SAP_RPT_OSS_Classifier, SAP_RPT_OSS_Regressor
 # CONFIG
 # ============================================================
 
-# INPUT_DIR = Path("Manufacturing/manufact_tabular/") 
-INPUT_DIR = Path("container_logistics_tabular_new")
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
+INPUT_DIR = LOGISTICS_DIR / "container_logistics_tabular_new"
 INPUT_PATTERNS = ("object_level.csv", "object_level_*.csv")
 
-# OUTPUT_DIR = Path("Manufacturing/results_object_attribute_values")
-OUTPUT_DIR = Path("results_object_attribute_values")
+# OUTPUT_DIR = MANUFACTURING_DIR / "results_object_attribute_values"
+OUTPUT_DIR = LOGISTICS_DIR / "results_object_attribute_values"
 
 MISSING_RATE = 0.10
 SEEDS = [42, 43, 44]

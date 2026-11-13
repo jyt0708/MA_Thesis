@@ -85,8 +85,8 @@ LORA_RANK = 8
 LORA_ALPHA = 16
 LORA_DROPOUT = 0.05
 
-TARGET_COLUMN = "obj_attr__yyy__timestamp"
-EXISTS_COLUMN = "obj_attr__yyy__timestamp__exists"
+TARGET_COLUMN = "obj_attr__xxx__timestamp"
+EXISTS_COLUMN = "obj_attr__xxx__timestamp__exists"
 DOMAIN = "manufacturing"
 
 # Timestamp preprocessing, shared by pretrained and LoRA evaluation.
@@ -100,7 +100,7 @@ TARGET_UNIT = "seconds"
 # "first_event":  Departure - first_event_time (default)
 # "last_event":   Departure - last_event_time
 # "midpoint":     Departure - (first_event_time + last_event_time) / 2
-TARGET_REPRESENTATION = "last_event"
+TARGET_REPRESENTATION = "fixed_origin"
 FIRST_EVENT_COLUMN = "first_event_time"
 LAST_EVENT_COLUMN = "last_event_time"
 # Signed durations are valid; no clipping to the event interval.
@@ -545,7 +545,7 @@ set_seed(BASE_SEED)
 """
 
 DATA_DIR = Path("Manufacturing/manufact_tabular")
-OUTPUT_DIR = Path("Manufacturing/FT_results_Manufact/{TARGET_COLUMN}")
+OUTPUT_DIR = Path(f"Manufacturing/FT_results_Manufact/{TARGET_COLUMN}")
 
 # >>> TARGET REPRESENTATION: preserve the original fixed-origin output path.
 # Other representations get separate checkpoints/results to avoid overwrites.
@@ -635,7 +635,7 @@ def split_xy(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         feature_drop.append(TARGET_COLUMN.rsplit("__", 1)[0])
     X = frame.drop(columns=feature_drop, errors="ignore").copy()
 
-    # >>> TARGET REPRESENTATION: same feature columns; only y is re-encoded.
+    # >>> TARGET REPRESENTATION: same feature columns
     y = pd.DataFrame({
         TARGET_COLUMN: encode_target_seconds(frame)
     }, index=frame.index)
@@ -926,7 +926,7 @@ def load_trainable_state_dict(
 
 """### Tokenization, evaluation and training"""
 
-import psutil
+# import psutil
 
 def make_tokenizer(is_valid: bool) -> Tokenizer:
     return Tokenizer(
@@ -1296,12 +1296,12 @@ def fit_lora(
         }
 
         if step % 50 == 0:
-            print(
-                f"Finished step {step}: "
-                f"loss={record['train_loss']:.4f}, "
-                f"system RAM={psutil.virtual_memory().percent:.1f}%",
-                flush=True,
-            )
+            # print(
+            #     f"Finished step {step}: "
+            #     f"loss={record['train_loss']:.4f}, "
+            #     f"system RAM={psutil.virtual_memory().percent:.1f}%",
+            #     flush=True,
+            # )
 
             if device.type == "cuda":
                 print(
@@ -2149,7 +2149,7 @@ comparison_summary.to_csv(
     index=False,
 )
 
-display(metrics_table)
-display(summary_table)
-display(comparison_table)
-display(comparison_summary)
+# display(metrics_table)
+# display(summary_table)
+# display(comparison_table)
+# display(comparison_summary)

@@ -39,17 +39,20 @@ from sap_rpt_oss import SAP_RPT_OSS_Classifier, SAP_RPT_OSS_Regressor
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
 
 # INPUT_DIR = Path("Manufacturing/manufact_tabular")
-INPUT_DIR = Path("container_logistics_tabular")
+INPUT_DIR = LOGISTICS_DIR / "container_logistics_tabular"
 OBJECT_PATTERNS = ("object_level.csv", "object_level_*.csv")
 # OUTPUT_DIR = Path("Manufacturing/results_missing_object_manufact")
-OUTPUT_DIR = Path("results_missing_object_logistics")
+OUTPUT_DIR = LOGISTICS_DIR / "results_missing_object_logistics"
 
 MISSING_RATE = 0.10
 SEEDS = [42, 43, 44]
-MAX_CONTEXT_SIZE = 2048 # 8192
-BAGGING = 1 # 8
+MAX_CONTEXT_SIZE = 2048 
+BAGGING = 1
 
 PREDICT_OBJECT_TYPE = True
 PREDICT_ATTRIBUTE_PRESENCE = True

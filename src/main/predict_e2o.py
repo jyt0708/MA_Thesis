@@ -45,9 +45,12 @@ from sklearn.metrics import (
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parents[2]
+LOGISTICS_DIR = ROOT / "Logistics"
+MANUFACTURING_DIR = ROOT / "Manufacturing"
 
-DEFAULT_INPUT = Path("container_logistics_tabular_new/e2o_level_*.csv")
-DEFAULT_OUTPUT_DIR = Path("results_e2o_candidate_ranking")
+DEFAULT_INPUT = LOGISTICS_DIR / "container_logistics_tabular_new/e2o_level_*.csv"
+DEFAULT_OUTPUT_DIR = LOGISTICS_DIR / "results_e2o_candidate_ranking"
 DEFAULT_SEEDS = (42, 43, 44)
 
 MISSING_RATE = 0.10
@@ -56,8 +59,8 @@ HARD_NEGATIVE_FRACTION = 0.50
 CANDIDATE_GENERATION_SEED = 2026
 MIN_OBJECT_RELATIONS = 2
 
-MAX_CONTEXT_SIZE = 8192
-BAGGING = 8
+MAX_CONTEXT_SIZE = 2048
+BAGGING = 1
 PREDICTION_BATCH_SIZE = 2048
 
 REQUIRED_COLUMNS = (
